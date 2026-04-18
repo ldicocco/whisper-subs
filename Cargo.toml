@@ -1,0 +1,50 @@
+[package]
+name = "whisper-subs"
+version = "0.1.0"
+edition = "2024"
+authors = ["Luciano"]
+description = "AVI/video → SRT subtitle generator using whisper.cpp via whisper-rs"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/ldicocco/whisper-subs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+hound = "3.5"
+indicatif = "0.18"
+tempfile = "3.13"
+thiserror = "2.0.18"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+whisper-rs = "0.16"
+
+# Auto-enable Metal on Apple Silicon so `cargo build --release` works
+# without `--features metal`. See README "Disabling Metal on Apple Silicon"
+# for how to override this on the same machine.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[features]
+default = []
+# Pick ONE backend for your platform:
+#   --features metal       (macOS, Apple Silicon)
+#   --features coreml      (macOS, Apple Neural Engine; combine with metal)
+#   --features cuda        (Linux/Windows with NVIDIA GPU)
+#   --features vulkan      (cross-platform GPU)
+#   --features openblas    (CPU acceleration via OpenBLAS)
+#   (none)                 (plain CPU)
+metal = ["whisper-rs/metal"]
+coreml = ["whisper-rs/coreml"]
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
+openblas = ["whisper-rs/openblas"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+
+[[bin]]
+name = "whisper-subs"
+path = "src/main.rs"

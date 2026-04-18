@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+*.bin
+/models/
+*.srt
+*.vtt
+*.wav
+*.avi
+*.mkv
+*.mp4
+.DS_Store
+.claude/
