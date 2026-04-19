@@ -192,14 +192,25 @@ try biasing the decoder with `--prompt "topical words"`, or switch to
 a smaller model — paradoxically, larger models hallucinate more on
 noisy or music-heavy audio.
 
-### If you need speed back
+### Trading accuracy for speed
 
-Flip the two dominant costs off:
+The defaults prioritise transcription quality; if throughput matters more
+than the occasional loop, flip the two dominant costs off:
 
 ```bash
 whisper-subs -r ~/Videos --beam-size 1 --logprob-threshold -1.0
-# ~2× faster, roughly matches whisper-cli defaults
 ```
+
+- **~2× faster** — matches whisper-cli's stock defaults.
+- **Higher hallucination rate** — the loop detector (`--on-loop`) will fire
+  noticeably more often on long batches, and subtler quality drops (phantom
+  words, dropped trailing phrases) become more common too. The quality-first
+  defaults exist specifically because those whisper-cli defaults miss too
+  many bad decodes on feature-length audio.
+
+You can dial either knob independently if you want a compromise: keep
+`--beam-size 1` but leave `--logprob-threshold` at `-0.5` (about 1.5× faster,
+middling robustness), or vice versa.
 
 ## Project layout
 
