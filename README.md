@@ -192,6 +192,69 @@ try biasing the decoder with `--prompt "topical words"`, or switch to
 a smaller model — paradoxically, larger models hallucinate more on
 noisy or music-heavy audio.
 
+### The "Transcription by CastingWords" hallucination
+
+If the detector reports that the loop covers **the entire transcript**
+and the repeated text is something like "Transcription by CastingWords",
+"Thanks for watching!", "Subtitles by the Amara.org community",
+"Please like and subscribe", or similar credit-line phrasing, you've
+hit one of Whisper's trained-in hallucinations. These strings appeared
+all over the model's training data (YouTube-adjacent subtitle dumps),
+so the decoder falls back to them when it can't get a foothold on the
+audio. Classic triggers: old film, low-bitrate mono, tape hiss,
+music-heavy sections, and very quiet or muffled speech.
+
+Standard mitigations (VAD, logprob threshold, beam search) don't
+help much because every VAD chunk independently converges on the
+same attractor — tightening them just produces more copies of the
+hallucination. Three things do work, in order of effectiveness:
+
+**1. Prime the decoder with an initial prompt.** Biggest lever by far.
+Tell whisper what kind of content to expect; 20–30 tokens of plausible
+domain vocabulary is usually enough to pull it out of the basin:
+
+```bash
+whisper-subs \
+  --prompt "Rod Serling narrates a Twilight Zone episode titled The Grave." \
+  movie.avi
+```
+
+**2. Disable VAD.** When every chunk hallucinates, VAD is amplifying
+the problem by feeding the decoder too-short spans. Longer inputs give
+it more genuine speech to anchor on:
+
+```bash
+whisper-subs --no-vad movie.avi
+```
+
+**3. Switch from turbo to full large-v3.** Turbo's distilled decoder
+is more susceptible to this specific pattern:
+
+```bash
+whisper-subs -m models/ggml-large-v3.bin movie.avi
+```
+
+Combine all three for the hard cases:
+
+```bash
+whisper-subs \
+  -m models/ggml-large-v3.bin \
+  --no-vad \
+  --beam-size 8 \
+  --prompt "Rod Serling narrates a Twilight Zone episode titled The Grave." \
+  movie.avi
+```
+
+If even that produces garbage, extract a 30-second sample and listen
+before tuning further — if the audio is mostly hiss or music, no
+decoder tweak will rescue it and you need audio preprocessing
+(denoise + normalize) first:
+
+```bash
+ffmpeg -ss 60 -t 30 -i movie.avi -ac 1 -ar 16000 /tmp/sample.wav
+afplay /tmp/sample.wav   # macOS; use mpv or ffplay elsewhere
+```
+
 ### Trading accuracy for speed
 
 The defaults prioritise transcription quality; if throughput matters more

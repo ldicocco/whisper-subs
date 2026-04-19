@@ -376,6 +376,7 @@ fn process_one(
     );
 
     info!("transcribing…");
+    let t0 = std::time::Instant::now();
     let mut segments = transcribe::run(
         ctx,
         transcribe::Config {
@@ -392,7 +393,17 @@ fn process_one(
         },
     )
     .context("transcription failed")?;
-    info!("got {} segments", segments.len());
+    let elapsed = t0.elapsed().as_secs_f32();
+    let audio_s = samples.len() as f32 / audio::SAMPLE_RATE as f32;
+    let rtf = if elapsed > 0.0 {
+        audio_s / elapsed
+    } else {
+        0.0
+    };
+    info!(
+        "transcribed {audio_s:.0}s of audio in {elapsed:.1}s ({rtf:.1}× real-time), {} segments",
+        segments.len()
+    );
 
     if cli.merge_gap_ms > 0 {
         let before = segments.len();
