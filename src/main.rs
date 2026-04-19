@@ -138,7 +138,7 @@ struct Cli {
     /// `-truncated` before the extension so you can spot heavily-truncated
     /// outputs at a glance in a batch (e.g. `movie.srt` → `movie-truncated.srt`).
     /// Set to 100 to never tag; 0 to always tag.
-    #[arg(long, default_value_t = 20, value_name = "PCT")]
+    #[arg(long, default_value_t = 10, value_name = "PCT")]
     loop_near_end_pct: u8,
 
     /// Beam search width. Larger = more robust against hallucinations,
