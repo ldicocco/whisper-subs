@@ -27,6 +27,15 @@ pub struct Config<'a> {
     /// skip non-speech regions — kills silence-driven hallucinations and
     /// speeds things up on long files with pauses.
     pub vad_model: Option<&'a Path>,
+    /// Max length of a single speech chunk when VAD is active. Smaller =
+    /// smaller blast radius if a chunk loops; risk of mid-word boundary.
+    pub vad_max_speech_s: f32,
+    /// `1` → greedy decoding, `>=2` → beam search with this beam width.
+    /// Larger beams resist hallucination better but are proportionally slower.
+    pub beam_size: usize,
+    /// Logprob threshold below which whisper triggers a temperature-fallback
+    /// re-decode. Closer to 0 = stricter.
+    pub logprob_thold: f32,
 }
 
 /// Load the whisper model. Callers should do this once and reuse the returned
@@ -45,7 +54,15 @@ pub fn load_context(model_path: &Path) -> Result<WhisperContext> {
 pub fn run(ctx: &WhisperContext, cfg: Config<'_>) -> Result<Vec<Segment>> {
     let mut state = ctx.create_state().context("creating whisper state")?;
 
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    let strategy = if cfg.beam_size <= 1 {
+        SamplingStrategy::Greedy { best_of: 1 }
+    } else {
+        SamplingStrategy::BeamSearch {
+            beam_size: cfg.beam_size as i32,
+            patience: -1.0,
+        }
+    };
+    let mut params = FullParams::new(strategy);
     params.set_language(Some(cfg.language));
     params.set_translate(cfg.translate);
     params.set_print_special(false);
@@ -63,7 +80,7 @@ pub fn run(ctx: &WhisperContext, cfg: Config<'_>) -> Result<Vec<Segment>> {
     params.set_temperature(0.0);
     params.set_temperature_inc(0.2);
     params.set_entropy_thold(2.4);
-    params.set_logprob_thold(-1.0);
+    params.set_logprob_thold(cfg.logprob_thold);
     params.set_no_speech_thold(0.6);
     if cfg.threads > 0 {
         params.set_n_threads(cfg.threads as i32);
@@ -76,13 +93,10 @@ pub fn run(ctx: &WhisperContext, cfg: Config<'_>) -> Result<Vec<Segment>> {
             .to_str()
             .context("VAD model path is not valid UTF-8")?;
         params.set_vad_model_path(Some(vad_str));
-        // Cap chunk length to whisper's native 30s window. The library default
-        // is f32::MAX, which can send a 10-minute uninterrupted monologue as a
-        // single chunk — giving a repetition loop the whole chunk to spiral.
-        // Splitting on silence points inside the cap bounds each decoder
-        // call's blast radius so no_context can reset between chunks.
+        // Cap chunk length so a repetition loop in one chunk can't spiral
+        // across the whole monologue; no_context resets between chunks.
         let mut vad_params = WhisperVadParams::default();
-        vad_params.set_max_speech_duration(29.0);
+        vad_params.set_max_speech_duration(cfg.vad_max_speech_s);
         params.set_vad_params(vad_params);
         params.enable_vad(true);
     }

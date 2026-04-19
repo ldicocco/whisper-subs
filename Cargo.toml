@@ -2,11 +2,14 @@
 name = "whisper-subs"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Luciano"]
 description = "AVI/video → SRT subtitle generator using whisper.cpp via whisper-rs"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/ldicocco/whisper-subs"
+keywords = ["whisper", "subtitles", "transcription", "srt", "ffmpeg"]
+categories = ["command-line-utilities", "multimedia::video"]
 
 [dependencies]
 anyhow = "1.0"

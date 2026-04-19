@@ -19,7 +19,12 @@ Pipeline: **media file → ffmpeg → 16 kHz mono f32 PCM → whisper.cpp → SR
 
 ## Prerequisites
 
-- **Rust** 1.75+
+- **Rust** 1.85+ (needed for edition 2024 and let-chains)
+- **A C++ toolchain + `cmake`** — `whisper-rs-sys` builds whisper.cpp from
+  vendored C++ source on first compile.
+  - macOS: `xcode-select --install` then `brew install cmake`
+  - Debian/Ubuntu: `sudo apt install build-essential cmake`
+  - Windows: MSVC Build Tools + CMake
 - **ffmpeg** on `PATH` (or pass `--ffmpeg /path/to/ffmpeg`)
 - A `ggml-*.bin` Whisper model. Download from
   <https://huggingface.co/ggerganov/whisper.cpp>:
@@ -146,6 +151,55 @@ Run `whisper-subs --help` for the full option list.
 - On CPU-only, `small` is roughly real-time with OpenBLAS; `medium` is 2–3×
   real-time; `large-v3` is 4–8× real-time.
 - The `--threads` flag helps on many-core CPU machines; leave at 0 for auto.
+
+## Hallucination control
+
+Whisper's most common failure mode is a **repetition loop** — the same
+sentence dumped to the end of the transcript. whisper-subs ships with
+defaults tuned for quality over raw throughput. Every knob is overridable.
+
+### Defaults (all on)
+
+| Mitigation               | How it works                                        | Cost            | Flag                       |
+|--------------------------|-----------------------------------------------------|-----------------|----------------------------|
+| Silero VAD               | Skip non-speech; auto-detected next to `--model`    | tiny            | `--no-vad`, `--vad-model`  |
+| Chunked decoding, 15 s   | Cap each decoder call so loops can't spiral         | possible boundary cut | `--vad-max-speech`   |
+| No context carry-over    | Don't feed previous-chunk tokens into the next      | —               | (not exposed)              |
+| Suppress non-speech      | Drops the "music/thanks" hallucination family       | —               | (not exposed)              |
+| Beam search (width 5)    | Explore multiple decoder paths                      | ~2× slower      | `--beam-size` (1 = greedy) |
+| Stricter logprob (-0.5)  | Re-decode low-confidence windows at higher temp     | slower on hard audio | `--logprob-threshold` |
+| Tail-loop detector       | Truncate or fail if ≥5 identical trailing segments  | —               | `--on-loop`, `--loop-threshold` |
+
+### If you still see loops
+
+Whisper's failure rate on long audio is 1–5% even with everything enabled.
+Over a batch you'll see the detector fire occasionally. To push the rate
+lower, at increasing speed cost:
+
+```bash
+# tighter VAD chunks (smaller blast radius)
+whisper-subs -r ~/Videos --vad-max-speech 10
+
+# stricter confidence gate (more windows re-decoded)
+whisper-subs -r ~/Videos --logprob-threshold -0.3
+
+# wider beam (slowest, most robust)
+whisper-subs -r ~/Videos --beam-size 8
+```
+
+Diminishing returns beyond that. If a specific file reliably fails,
+try biasing the decoder with `--prompt "topical words"`, or switch to
+a smaller model — paradoxically, larger models hallucinate more on
+noisy or music-heavy audio.
+
+### If you need speed back
+
+Flip the two dominant costs off:
+
+```bash
+whisper-subs -r ~/Videos --beam-size 1 --logprob-threshold -1.0
+# ~2× faster, roughly matches whisper-cli defaults
+```
 
 ## Project layout
 

@@ -2,6 +2,7 @@
 //!
 //! Pipeline: input media → ffmpeg → 16kHz mono f32 PCM → whisper.cpp → SRT with reflow.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -119,6 +120,10 @@ struct Cli {
     #[arg(long, value_name = "N")]
     limit: Option<usize>,
 
+    /// When input is a directory, also scan subdirectories.
+    #[arg(short, long)]
+    recursive: bool,
+
     /// What to do when whisper's "repeat-the-same-line-to-the-end" failure is
     /// detected (>= --loop-threshold consecutive identical trailing segments).
     #[arg(long, value_enum, default_value_t = LoopAction::Truncate)]
@@ -127,6 +132,23 @@ struct Cli {
     /// Minimum consecutive identical trailing segments that count as a loop.
     #[arg(long, default_value_t = 5, value_name = "N")]
     loop_threshold: usize,
+
+    /// Beam search width. Larger = more robust against hallucinations,
+    /// slower (~2× at beam=5 vs 1). Set to 1 for greedy decoding.
+    #[arg(long, default_value_t = 5, value_name = "N")]
+    beam_size: usize,
+
+    /// Log-probability threshold — windows whose average logprob falls below
+    /// this trigger a temperature-fallback re-decode. Closer to 0 = stricter.
+    /// whisper-cli default: -1.0.
+    #[arg(long, default_value_t = -0.5, value_name = "LP", allow_hyphen_values = true)]
+    logprob_threshold: f32,
+
+    /// Max length (seconds) of a single speech chunk when VAD is active.
+    /// Smaller = smaller blast radius if a chunk loops; risk of mid-word
+    /// boundary on long monologues.
+    #[arg(long, default_value_t = 15.0, value_name = "SECS")]
+    vad_max_speech: f32,
 
     /// Verbose logging
     #[arg(short, long)]
@@ -148,32 +170,47 @@ fn output_ext(fmt: OutputFormat) -> &'static str {
     }
 }
 
-/// Collect videos in `dir` (non-recursive) that don't already have a
-/// subtitle of `fmt` sitting next to them. Result is sorted alphabetically.
-fn collect_batch(dir: &Path, fmt: OutputFormat) -> Result<Vec<PathBuf>> {
+/// Collect videos in `dir` that don't already have a subtitle of `fmt` sitting
+/// next to them. With `recursive`, descends into subdirectories; a canonicalized
+/// visited-set prevents symlink loops. Result is sorted alphabetically.
+fn collect_batch(dir: &Path, fmt: OutputFormat, recursive: bool) -> Result<Vec<PathBuf>> {
     let sub_ext = output_ext(fmt);
     let mut found = Vec::new();
     let mut skipped = 0usize;
-    for entry in
-        std::fs::read_dir(dir).with_context(|| format!("reading directory {}", dir.display()))?
-    {
-        let entry = entry.context("reading directory entry")?;
-        let path = entry.path();
-        if !path.is_file() {
+    let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    while let Some(d) = stack.pop() {
+        let canonical = std::fs::canonicalize(&d).unwrap_or_else(|_| d.clone());
+        if !visited.insert(canonical) {
             continue;
         }
-        let ext = match path.extension().and_then(|e| e.to_str()) {
-            Some(e) => e.to_ascii_lowercase(),
-            None => continue,
-        };
-        if !VIDEO_EXTS.contains(&ext.as_str()) {
-            continue;
+        for entry in
+            std::fs::read_dir(&d).with_context(|| format!("reading directory {}", d.display()))?
+        {
+            let entry = entry.context("reading directory entry")?;
+            let path = entry.path();
+            if path.is_dir() {
+                if recursive {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let ext = match path.extension().and_then(|e| e.to_str()) {
+                Some(e) => e.to_ascii_lowercase(),
+                None => continue,
+            };
+            if !VIDEO_EXTS.contains(&ext.as_str()) {
+                continue;
+            }
+            if path.with_extension(sub_ext).exists() {
+                skipped += 1;
+                continue;
+            }
+            found.push(path);
         }
-        if path.with_extension(sub_ext).exists() {
-            skipped += 1;
-            continue;
-        }
-        found.push(path);
     }
     found.sort();
     if skipped > 0 {
@@ -255,7 +292,7 @@ fn run() -> Result<()> {
                  each video gets a sibling subtitle file automatically"
             );
         }
-        let mut files = collect_batch(&cli.input, cli.format)?;
+        let mut files = collect_batch(&cli.input, cli.format, cli.recursive)?;
         if files.is_empty() {
             info!("nothing to do in {}", cli.input.display());
             return Ok(());
@@ -349,6 +386,9 @@ fn process_one(
             prompt: cli.prompt.as_deref(),
             progress: cli.progress,
             vad_model,
+            vad_max_speech_s: cli.vad_max_speech,
+            beam_size: cli.beam_size,
+            logprob_thold: cli.logprob_threshold,
         },
     )
     .context("transcription failed")?;
