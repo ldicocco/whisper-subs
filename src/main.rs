@@ -248,8 +248,9 @@ fn collect_batch(dir: &Path, fmt: OutputFormat, recursive: bool) -> Result<Vec<P
 }
 
 /// Resolve the Silero VAD model path: explicit flag wins; otherwise look for
-/// `ggml-silero-v5.1.2.bin` / `v6.2.0.bin` next to the whisper model, mirroring
-/// the detection logic in whisper.cpp's `scripts/video-to-srt.sh`.
+/// `ggml-silero-v6.2.0.bin` / `v5.1.2.bin` next to the whisper model. v6 is
+/// preferred — whisper.cpp itself defaulted to it in PR #3524 and Silero
+/// reports ~16% fewer errors on noisy audio vs v5.
 fn resolve_vad_model(cli: &Cli) -> Option<PathBuf> {
     if cli.no_vad {
         return None;
@@ -258,7 +259,7 @@ fn resolve_vad_model(cli: &Cli) -> Option<PathBuf> {
         return p.exists().then(|| p.clone());
     }
     let dir = cli.model.parent()?;
-    for name in ["ggml-silero-v5.1.2.bin", "ggml-silero-v6.2.0.bin"] {
+    for name in ["ggml-silero-v6.2.0.bin", "ggml-silero-v5.1.2.bin"] {
         let candidate = dir.join(name);
         if candidate.exists() {
             return Some(candidate);

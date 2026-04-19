@@ -39,6 +39,22 @@ Pipeline: **media file → ffmpeg → 16 kHz mono f32 PCM → whisper.cpp → SR
   - `ggml-medium.bin` (~1.5 GB) — clearly better, especially for non-English
   - `ggml-large-v3.bin` (~3.1 GB) — best quality
   - `ggml-large-v3-turbo.bin` (~1.6 GB) — near-large quality, much faster
+- *(optional but recommended)* A **Silero VAD** model. Drop it next to your
+  whisper model and it gets auto-detected; it trims non-speech and cuts
+  hallucinations on long files. Download from
+  <https://huggingface.co/ggml-org/whisper-vad>:
+
+  ```bash
+  curl -L -o ggml-silero-v5.1.2.bin \
+      https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
+  # or the newer release:
+  curl -L -o ggml-silero-v6.2.0.bin \
+      https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin
+  ```
+
+  Either `ggml-silero-v5.1.2.bin` or `ggml-silero-v6.2.0.bin` sitting next
+  to `--model` is picked up automatically. To use a different path pass
+  `--vad-model <path>`; to opt out entirely pass `--no-vad`.
 
 ## Build
 
