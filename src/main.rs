@@ -133,6 +133,14 @@ struct Cli {
     #[arg(long, default_value_t = 5, value_name = "N")]
     loop_threshold: usize,
 
+    /// With --on-loop truncate: if the loop starts within the last N% of the
+    /// transcript by time, write the normal output filename; otherwise append
+    /// `-truncated` before the extension so you can spot heavily-truncated
+    /// outputs at a glance in a batch (e.g. `movie.srt` → `movie-truncated.srt`).
+    /// Set to 100 to never tag; 0 to always tag.
+    #[arg(long, default_value_t = 20, value_name = "PCT")]
+    loop_near_end_pct: u8,
+
     /// Beam search width. Larger = more robust against hallucinations,
     /// slower (~2× at beam=5 vs 1). Set to 1 for greedy decoding.
     #[arg(long, default_value_t = 5, value_name = "N")]
@@ -167,6 +175,24 @@ fn output_ext(fmt: OutputFormat) -> &'static str {
         OutputFormat::Vtt => "vtt",
         OutputFormat::Txt => "txt",
         OutputFormat::Json => "json",
+    }
+}
+
+/// Append `-truncated` before the extension, e.g. `movie.srt` → `movie-truncated.srt`.
+/// Falls back to appending at the end if there's no extension.
+fn tag_truncated(path: &Path) -> PathBuf {
+    match (path.file_stem(), path.extension()) {
+        (Some(stem), Some(ext)) => {
+            let mut name = stem.to_os_string();
+            name.push("-truncated.");
+            name.push(ext);
+            path.with_file_name(name)
+        }
+        _ => {
+            let mut name = path.as_os_str().to_os_string();
+            name.push("-truncated");
+            PathBuf::from(name)
+        }
     }
 }
 
@@ -205,7 +231,9 @@ fn collect_batch(dir: &Path, fmt: OutputFormat, recursive: bool) -> Result<Vec<P
             if !VIDEO_EXTS.contains(&ext.as_str()) {
                 continue;
             }
-            if path.with_extension(sub_ext).exists() {
+            if path.with_extension(sub_ext).exists()
+                || tag_truncated(&path.with_extension(sub_ext)).exists()
+            {
                 skipped += 1;
                 continue;
             }
@@ -413,6 +441,8 @@ fn process_one(
         }
     }
 
+    let mut final_output = output_path.to_path_buf();
+
     if !matches!(cli.on_loop, LoopAction::Off)
         && let Some(start) = srt::detect_tail_loop(&segments, cli.loop_threshold)
     {
@@ -433,15 +463,47 @@ fn process_one(
                 );
             }
             LoopAction::Truncate => {
-                warn!(
-                    "whisper repetition loop detected: \"{sample}\" repeats \
-                     {run_len}× starting at {ts} — truncating output there."
-                );
-                segments.truncate(start);
-                if segments.is_empty() {
-                    anyhow::bail!(
-                        "whisper repetition loop covered the entire transcript; \
-                         nothing to write"
+                let (kept_ratio, will_tag) = if start == 0 {
+                    // Loop covers everything — keep the raw looped output so
+                    // the user can see what whisper produced, and always tag.
+                    (0.0, true)
+                } else {
+                    // Capture the full transcript end BEFORE truncating, so the
+                    // ratio reflects how much of the original transcript we kept.
+                    let total_ms = segments.last().map(|s| s.end_ms).unwrap_or(start_ms);
+                    segments.truncate(start);
+                    let r = if total_ms > 0 {
+                        start_ms as f32 / total_ms as f32
+                    } else {
+                        0.0
+                    };
+                    let threshold = 1.0 - (cli.loop_near_end_pct.min(100) as f32 / 100.0);
+                    (r, r < threshold)
+                };
+
+                if will_tag {
+                    final_output = tag_truncated(&final_output);
+                }
+
+                if start == 0 {
+                    warn!(
+                        "whisper repetition loop detected: \"{sample}\" repeats \
+                         {run_len}× and covers the entire transcript — saving full \
+                         looped output as {out} for manual review.",
+                        out = final_output.display()
+                    );
+                } else if will_tag {
+                    warn!(
+                        "whisper repetition loop detected: \"{sample}\" repeats \
+                         {run_len}× starting at {ts}; kept {pct:.0}% of the \
+                         transcript — flagging as {out} for manual review.",
+                        pct = kept_ratio * 100.0,
+                        out = final_output.display()
+                    );
+                } else {
+                    warn!(
+                        "whisper repetition loop detected: \"{sample}\" repeats \
+                         {run_len}× starting at {ts} — truncating output there."
                     );
                 }
             }
@@ -461,8 +523,8 @@ fn process_one(
         OutputFormat::Txt => srt::render_txt(&segments),
         OutputFormat::Json => srt::render_json(&segments)?,
     };
-    std::fs::write(output_path, rendered)
-        .with_context(|| format!("writing {}", output_path.display()))?;
-    info!("wrote: {}", output_path.display());
+    std::fs::write(&final_output, rendered)
+        .with_context(|| format!("writing {}", final_output.display()))?;
+    info!("wrote: {}", final_output.display());
     Ok(())
 }

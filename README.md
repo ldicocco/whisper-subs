@@ -169,6 +169,20 @@ defaults tuned for quality over raw throughput. Every knob is overridable.
 | Beam search (width 5)    | Explore multiple decoder paths                      | ~2× slower      | `--beam-size` (1 = greedy) |
 | Stricter logprob (-0.5)  | Re-decode low-confidence windows at higher temp     | slower on hard audio | `--logprob-threshold` |
 | Tail-loop detector       | Truncate or fail if ≥5 identical trailing segments  | —               | `--on-loop`, `--loop-threshold` |
+| Heavy-truncation tag     | If the loop ate more than the last 20% of the transcript, save as `movie-truncated.srt` | — | `--loop-near-end-pct`    |
+
+**Spotting bad outputs in a batch.** When the detector fires and a
+*substantial* chunk of the transcript gets dropped, the output is written as
+`<stem>-truncated.<ext>` instead of `<stem>.<ext>`, so you can spot problem
+files at a glance in a large batch even if you missed the warning on the
+console. Batch mode also skips any file that already has a `-truncated`
+sibling, so re-running the batch won't re-transcribe them. To retry one,
+delete the `-truncated` file; to accept it, rename it to the canonical
+`<stem>.<ext>`.
+
+The "last 20%" threshold is tunable via `--loop-near-end-pct`: set it to
+`100` to never tag (every truncated output keeps its canonical name), or
+to `0` to always tag.
 
 ### If you still see loops
 
